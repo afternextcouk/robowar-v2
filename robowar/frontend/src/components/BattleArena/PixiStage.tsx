@@ -37,8 +37,8 @@ export default function PixiStage({
     if (!containerRef.current || appRef.current) return;
 
     const container = containerRef.current;
-    const w = width  ?? container.clientWidth  || 800;
-    const h = height ?? container.clientHeight || 600;
+    const w = width  ?? (container.clientWidth  || 800);
+    const h = height ?? (container.clientHeight || 600);
 
     const app = new Application();
     await app.init({
