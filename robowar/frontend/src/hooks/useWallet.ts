@@ -139,9 +139,10 @@ export function useWallet() {
 
   // ── Switch network ─────────────────────────────────────────────────────────
   const switchToRequiredChain = useCallback(async () => {
-    if (!window.ethereum) return;
+    const eth = getEthereum();
+    if (!eth) return;
     try {
-      await window.ethereum.request({
+      await eth.request({
         method: 'wallet_switchEthereumChain',
         params: [{ chainId: `0x${REQUIRED_CHAIN_ID.toString(16)}` }],
       });
@@ -153,7 +154,8 @@ export function useWallet() {
 
   // ── Listen for account / chain changes ─────────────────────────────────────
   useEffect(() => {
-    if (!window.ethereum) return;
+    const eth = getEthereum();
+    if (!eth) return;
 
     const handleAccountsChanged = (accounts: unknown) => {
       const accs = accounts as string[];
@@ -171,12 +173,12 @@ export function useWallet() {
       setWallet({ chainId });
     };
 
-    window.ethereum.on('accountsChanged', handleAccountsChanged);
-    window.ethereum.on('chainChanged', handleChainChanged);
+    eth.on('accountsChanged', handleAccountsChanged);
+    eth.on('chainChanged', handleChainChanged);
 
     return () => {
-      window.ethereum?.removeListener('accountsChanged', handleAccountsChanged);
-      window.ethereum?.removeListener('chainChanged', handleChainChanged);
+      eth.removeListener('accountsChanged', handleAccountsChanged);
+      eth.removeListener('chainChanged', handleChainChanged);
     };
   }, [connect, disconnect, setWallet]);
 
