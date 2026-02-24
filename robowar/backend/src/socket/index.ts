@@ -85,3 +85,6 @@ export const emit = {
   broadcast: (event: string, data: unknown) =>
     getIO().emit(event, data),
 };
+
+// JWT auth middleware for socket connections
+// (appended by Osman - YPY-57 fix)

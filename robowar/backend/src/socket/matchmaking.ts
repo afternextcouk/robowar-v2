@@ -119,8 +119,8 @@ async function findMatch(entry: QueueEntry, ns: Namespace): Promise<boolean> {
   };
 
   // Emit to both sockets
-  ns.to(entry.socketId).emit('match_found', payload1);
-  ns.to(opponent.socketId).emit('match_found', payload2);
+  ns.to(entry.socketId).emit('matchmaking:matched', payload1);
+  ns.to(opponent.socketId).emit('matchmaking:matched', payload2);
 
   console.log(`[Matchmaking] ✅ Matched ${entry.userId} vs ${opponent.userId} → Battle: ${battleId}`);
   return true;
@@ -136,7 +136,7 @@ export function registerMatchmakingHandlers(ns: Namespace): void {
     let matchPollInterval: ReturnType<typeof setInterval> | null = null;
 
     // ── join_queue ──────────────────────────────
-    socket.on('join_queue', async (data: {
+    socket.on('queue:join', async (data: {
       userId: string;
       robotId: string;
       tier: RobotTier;
@@ -156,7 +156,7 @@ export function registerMatchmakingHandlers(ns: Namespace): void {
       };
 
       await addToQueue(entry);
-      socket.emit('queue_joined', { position: 'searching', message: 'Looking for an opponent...' });
+      socket.emit('queue:updated', { position: 'searching', message: 'Looking for an opponent...' });
 
       // Poll for a match every 2 seconds
       matchPollInterval = setInterval(async () => {
@@ -169,7 +169,7 @@ export function registerMatchmakingHandlers(ns: Namespace): void {
     });
 
     // ── leave_queue ─────────────────────────────
-    socket.on('leave_queue', async () => {
+    socket.on('queue:leave', async () => {
       console.log(`[Matchmaking] ${socket.id} leaving queue`);
       if (matchPollInterval) {
         clearInterval(matchPollInterval);

@@ -183,7 +183,7 @@ async function processBattle(job: Job): Promise<Record<string, unknown>> {
   }
 
   // 8. Persist result to DB
-  const winnerId =
+  const winner_id =
     result.winner === "P1"
       ? battle.p1_user_id
       : result.winner === "P2"
@@ -204,7 +204,7 @@ async function processBattle(job: Job): Promise<Record<string, unknown>> {
      WHERE id = $8`,
     [
       result.winner,
-      winnerId,
+      winner_id,
       JSON.stringify(result.ticks),
       seed,
       result.totalTicks,
@@ -218,7 +218,7 @@ async function processBattle(job: Job): Promise<Record<string, unknown>> {
   emit.toBattle(battleId, "battle:complete", {
     battleId,
     winner: result.winner,
-    winnerId,
+    winner_id,
     totalTicks: result.totalTicks,
     finalP1Hp: result.finalP1Hp,
     finalP2Hp: result.finalP2Hp,
