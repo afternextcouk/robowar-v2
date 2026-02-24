@@ -1,79 +1,104 @@
 import { useWallet } from '../hooks/useWallet'
 import { useNavigate } from 'react-router-dom'
 import { useEffect } from 'react'
-import { ELDR_CONTRACT_ADDRESS } from '../web3/wagmiConfig'
+import { ELDR_CONTRACT_ADDRESS, BSC_CHAIN } from '../web3/wagmiConfig'
 
 export default function Onboarding() {
-  const { connect, address, eldrBalance, loading, error, isConnected } = useWallet()
+  const { connect, address, eldrBalance, loading, error, isConnected, isOnBSC } = useWallet()
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (isConnected) navigate('/pilot')
+    if (isConnected) {
+      const t = setTimeout(() => navigate('/pilot'), 1500)
+      return () => clearTimeout(t)
+    }
   }, [isConnected, navigate])
 
   return (
-    <div className="min-h-screen bg-black flex flex-col items-center justify-center text-white font-pixel p-4">
-      {/* Logo */}
-      <div className="mb-8 text-center">
-        <h1 className="text-4xl font-bold mb-2 tracking-widest">
-          {'ROBOWAR'.split('').map((c, i) => (
-            <span key={i} style={{ color: ['#00BFFF','#CC2200','#E8F4FF','#00CC44','#6600AA','#888899','#00BFFF'][i % 7] }}>{c}</span>
-          ))}
-        </h1>
-        <p className="text-gray-400 text-xs tracking-widest">ALGORITHM BATTLE PROTOCOL</p>
-      </div>
+    <div style={{ minHeight:'100vh', background:'#050505', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', color:'white', fontFamily:'monospace', padding:'1rem' }}>
+      {/* Title */}
+      <h1 style={{ fontSize:'2.5rem', letterSpacing:'0.3em', marginBottom:'0.25rem', fontWeight:'bold' }}>
+        {'ROBOWAR'.split('').map((c,i) => (
+          <span key={i} style={{ color:['#00BFFF','#FF3300','#00FFAA','#FF9900','#CC44FF','#00BFFF','#FF3300'][i] }}>{c}</span>
+        ))}
+      </h1>
+      <p style={{ color:'#444', fontSize:'0.7rem', letterSpacing:'0.2em', marginBottom:'3rem' }}>ALGORITHM BATTLE PROTOCOL</p>
 
-      {/* Wallet Connect Box */}
-      <div className="border border-gray-700 bg-gray-900 p-8 rounded w-full max-w-sm text-center">
+      {/* Card */}
+      <div style={{ border:'1px solid #222', background:'#0d0d0d', padding:'2rem', borderRadius:'8px', width:'100%', maxWidth:'380px', textAlign:'center' }}>
+
         {!address ? (
+          /* — Connect screen — */
           <>
-            <div className="text-6xl mb-4">🦊</div>
-            <h2 className="text-lg mb-2">Connect Your Wallet</h2>
-            <p className="text-gray-500 text-xs mb-6">
-              MetaMask required to play ROBOWAR
+            <div style={{ fontSize:'3rem', marginBottom:'1rem' }}>🦊</div>
+            <h2 style={{ fontSize:'1rem', marginBottom:'0.5rem' }}>Connect MetaMask</h2>
+            <p style={{ color:'#555', fontSize:'0.75rem', marginBottom:'0.5rem' }}>
+              BNB Smart Chain ağı gerekli
             </p>
+            <div style={{ background:'#111', border:'1px solid #2b3a1a', borderRadius:'4px', padding:'0.5rem', marginBottom:'1.5rem', fontSize:'0.7rem', color:'#F0B90B' }}>
+              🔶 BNB Smart Chain (BSC) • Chain ID: 56
+            </div>
+
             <button
               onClick={connect}
               disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white py-3 px-6 rounded font-bold tracking-wider transition-colors"
+              style={{
+                width:'100%', padding:'0.9rem', background: loading ? '#333' : '#F0B90B',
+                color:'#000', border:'none', borderRadius:'6px', fontWeight:'bold',
+                fontSize:'0.9rem', cursor: loading ? 'not-allowed' : 'pointer',
+                letterSpacing:'0.1em', fontFamily:'monospace'
+              }}
             >
-              {loading ? 'CONNECTING...' : '⚡ CONNECT METAMASK'}
+              {loading ? '⏳ BAĞLANIYOR...' : '⚡ METAMASK İLE GİRİŞ YAP'}
             </button>
+
             {error && (
-              <p className="text-red-400 text-xs mt-3">{error}</p>
+              <p style={{ color:'#ff4444', fontSize:'0.75rem', marginTop:'0.75rem' }}>{error}</p>
             )}
-            <p className="text-gray-600 text-xs mt-4">
-              No MetaMask?{' '}
-              <a href="https://metamask.io" target="_blank" rel="noreferrer" className="text-blue-400 underline">
-                Get it here
+
+            <p style={{ color:'#333', fontSize:'0.65rem', marginTop:'1rem' }}>
+              MetaMask yok mu?{' '}
+              <a href="https://metamask.io" target="_blank" rel="noreferrer" style={{ color:'#F0B90B' }}>
+                metamask.io
               </a>
             </p>
           </>
         ) : (
+          /* — Connected screen — */
           <>
-            <div className="text-4xl mb-4">✅</div>
-            <h2 className="text-green-400 text-lg mb-1">Wallet Connected!</h2>
-            <p className="text-gray-400 text-xs mb-4 break-all">{address}</p>
-            
+            <div style={{ fontSize:'2.5rem', marginBottom:'0.75rem' }}>✅</div>
+            <h2 style={{ color:'#00ff88', fontSize:'1rem', marginBottom:'0.25rem' }}>Bağlantı Başarılı!</h2>
+
+            {/* Network badge */}
+            <div style={{ display:'inline-block', background:'#1a2e00', border:'1px solid #2d5a00', borderRadius:'12px', padding:'0.25rem 0.75rem', fontSize:'0.65rem', color:'#88ff44', marginBottom:'1rem' }}>
+              {isOnBSC ? '🟢 BNB Smart Chain' : '🔴 Yanlış Ağ'}
+            </div>
+
+            {/* Wallet address */}
+            <p style={{ color:'#555', fontSize:'0.65rem', wordBreak:'break-all', marginBottom:'1rem', background:'#111', padding:'0.5rem', borderRadius:'4px' }}>
+              {address}
+            </p>
+
             {/* ELDR Balance */}
-            <div className="bg-gray-800 border border-yellow-600 rounded p-3 mb-4">
-              <p className="text-yellow-400 text-xs mb-1">ELDR Balance</p>
-              <p className="text-2xl font-bold text-yellow-300">{eldrBalance} <span className="text-sm">ELDR</span></p>
-              <p className="text-gray-600 text-xs mt-1 break-all">
-                Contract: {ELDR_CONTRACT_ADDRESS.slice(0,10)}...{ELDR_CONTRACT_ADDRESS.slice(-6)}
+            <div style={{ background:'#0d1a00', border:'1px solid #F0B90B', borderRadius:'6px', padding:'1rem', marginBottom:'1rem' }}>
+              <p style={{ color:'#888', fontSize:'0.65rem', marginBottom:'0.25rem' }}>ELDR Bakiyesi</p>
+              <p style={{ fontSize:'2rem', fontWeight:'bold', color:'#F0B90B', margin:0 }}>
+                {eldrBalance} <span style={{ fontSize:'0.8rem' }}>ELDR</span>
+              </p>
+              <p style={{ color:'#333', fontSize:'0.55rem', marginTop:'0.25rem', wordBreak:'break-all' }}>
+                {ELDR_CONTRACT_ADDRESS}
               </p>
             </div>
 
-            <p className="text-gray-400 text-xs">Redirecting to Pilot Creator...</p>
+            <p style={{ color:'#555', fontSize:'0.7rem' }}>⏳ Pilot Creator'a yönlendiriliyor...</p>
           </>
         )}
       </div>
 
-      {/* Contract info */}
-      <div className="mt-6 text-center text-gray-700 text-xs">
-        <p>ELDR Contract</p>
-        <p className="break-all max-w-xs">{ELDR_CONTRACT_ADDRESS}</p>
-      </div>
+      {/* Footer */}
+      <p style={{ color:'#1a1a1a', fontSize:'0.6rem', marginTop:'2rem' }}>
+        BSC Chain ID: {BSC_CHAIN.chainIdDecimal} • {BSC_CHAIN.blockExplorerUrls[0]}
+      </p>
     </div>
   )
 }
