@@ -19,15 +19,17 @@ import { API_BASE } from '../api/client';
 // Polygon Mainnet chain ID (change as needed)
 const REQUIRED_CHAIN_ID = 137;
 
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      on: (event: string, handler: (...args: unknown[]) => void) => void;
-      removeListener: (event: string, handler: (...args: unknown[]) => void) => void;
-      isMetaMask?: boolean;
-    };
-  }
+// window.ethereum is typed as `any` in wagmiConfig.ts; we use a local helper type
+// to avoid duplicate interface merges.
+type EthereumProvider = {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on: (event: string, handler: (...args: unknown[]) => void) => void;
+  removeListener: (event: string, handler: (...args: unknown[]) => void) => void;
+  isMetaMask?: boolean;
+};
+
+function getEthereum(): EthereumProvider | undefined {
+  return (window as unknown as { ethereum?: EthereumProvider }).ethereum;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -65,7 +67,8 @@ export function useWallet() {
 
   // ── Connect + Auth ─────────────────────────────────────────────────────────
   const connect = useCallback(async () => {
-    if (!window.ethereum) {
+    const eth = getEthereum();
+    if (!eth) {
       setError('MetaMask not detected. Please install MetaMask.');
       return;
     }
@@ -75,11 +78,11 @@ export function useWallet() {
       setWallet({ isConnecting: true });
 
       // 1. Request accounts
-      const accounts = (await window.ethereum.request({
+      const accounts = (await eth.request({
         method: 'eth_requestAccounts',
       })) as string[];
 
-      const chainIdHex = (await window.ethereum.request({
+      const chainIdHex = (await eth.request({
         method: 'eth_chainId',
       })) as string;
 
@@ -97,7 +100,7 @@ export function useWallet() {
       const { message } = await fetchNonce(address);
 
       // 3. Ask MetaMask to sign the nonce message
-      const signature = (await window.ethereum.request({
+      const signature = (await eth.request({
         method: 'personal_sign',
         params: [message, address],
       })) as string;

@@ -1,9 +1,18 @@
 /**
  * ROBOWAR V2 — Battle Arena Page
  * Orchestrates PixiJS stage, algorithm editor, and battle HUD.
+ *
+ * Real backend wiring:
+ *   • On mount: joins battle room via useSocket (emits battle:join)
+ *   • battle:tick    → updates PixiJS robot positions/HP + Zustand store
+ *   • battle:complete → sets phase → RESULT → shows victory/defeat overlay
  */
+import { useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useBattle } from '../hooks/useBattle';
+import { useSocket } from '../hooks/useSocket';
+import { useAuthStore } from '../store/authStore';
+import { useGameStore } from '../store/gameStore';
 import PixiStage from '../components/BattleArena/PixiStage';
 import AlgorithmEditor from '../components/BattleArena/AlgorithmEditor';
 import HPBar from '../components/ui/HPBar';
@@ -11,12 +20,20 @@ import EnergyBar from '../components/ui/EnergyBar';
 import ElementBadge from '../components/ui/ElementBadge';
 import PixelButton from '../components/ui/PixelButton';
 import PixelPanel from '../components/ui/PixelPanel';
+import type { BattleTick, WsBattleEnded } from '../types';
+
+// ─── Robot position (for PixiJS updates via imperative ref) ──────────────────
+export interface RobotPositions {
+  my:    { x: number; y: number; hp: number; energy: number };
+  enemy: { x: number; y: number; hp: number; energy: number };
+}
 
 export default function BattleArena() {
   const {
     phase,
     countdown,
     error,
+    battleId,
     currentBattle,
     activeRobot,
     myHpPercent,
@@ -27,6 +44,73 @@ export default function BattleArena() {
     forfeit,
     playAgain,
   } = useBattle();
+
+  const { connect } = useSocket();
+  const { updateBattleState, appendBattleLog } = useGameStore();
+
+  // Ref to hold latest robot positions for PixiJS imperative updates.
+  // We avoid React state here to not re-render the whole page on every tick.
+  const robotPositionsRef = useRef<RobotPositions>({
+    my:    { x: 0.25, y: 0.55, hp: 100, energy: 100 },
+    enemy: { x: 0.75, y: 0.55, hp: 100, energy: 100 },
+  });
+
+  // ── Direct battle:tick listener for PixiJS updates ────────────────────────
+  useEffect(() => {
+    if (!battleId) return;
+
+    const sock = connect();
+
+    const handleTick = (tick: BattleTick) => {
+      const p1 = tick.p1 as unknown as {
+        hp: number; energy: number;
+        position?: [number, number];
+        damage_dealt: number; action: string;
+      };
+      const p2 = tick.p2 as unknown as {
+        hp: number; energy: number;
+        position?: [number, number];
+        damage_dealt: number; action: string;
+      };
+
+      const battle = useGameStore.getState().currentBattle;
+      // Determine sides: fallback to p1 = my robot
+      const iAmP1 = !(battle?.myRobotId);
+      const myTick  = iAmP1 ? p1 : p2;
+      const enmTick = iAmP1 ? p2 : p1;
+
+      // Update the positions ref (PixiJS stage reads this on next ticker frame)
+      if (myTick?.position) {
+        robotPositionsRef.current.my.x = myTick.position[0] / 16; // normalize grid 0-1
+        robotPositionsRef.current.my.y = myTick.position[1] / 9;
+      }
+      if (enmTick?.position) {
+        robotPositionsRef.current.enemy.x = enmTick.position[0] / 16;
+        robotPositionsRef.current.enemy.y = enmTick.position[1] / 9;
+      }
+      robotPositionsRef.current.my.hp     = myTick?.hp ?? robotPositionsRef.current.my.hp;
+      robotPositionsRef.current.my.energy = myTick?.energy ?? robotPositionsRef.current.my.energy;
+      robotPositionsRef.current.enemy.hp     = enmTick?.hp ?? robotPositionsRef.current.enemy.hp;
+      robotPositionsRef.current.enemy.energy = enmTick?.energy ?? robotPositionsRef.current.enemy.energy;
+    };
+
+    const handleComplete = (data: WsBattleEnded) => {
+      // Handled in useBattle (sets RESULT phase) — here we just update the store
+      updateBattleState({
+        status:    'FINISHED',
+        winner:    data.winner_id ?? null,
+        rewardEldr: data.eldr_delta ?? null,
+      });
+    };
+
+    sock.on('battle:tick',     handleTick);
+    sock.on('battle:complete', handleComplete);
+
+    return () => {
+      sock.off('battle:tick',     handleTick);
+      sock.off('battle:complete', handleComplete);
+    };
+  }, [battleId, connect, updateBattleState]);
 
   // ── Error ──────────────────────────────────────────────────────────────────
   if (phase === 'ERROR') {
@@ -97,6 +181,12 @@ export default function BattleArena() {
               {isMyTurn ? '▶ YOUR TURN' : 'ENEMY TURN'}
             </p>
           )}
+          {phase === 'SETUP' && (
+            <p className="font-pixel text-[6px] text-[--volt]">SETUP</p>
+          )}
+          {phase === 'MATCHMAKING' && (
+            <p className="font-pixel text-[6px] text-[--volt] animate-pulse">SEARCHING...</p>
+          )}
         </div>
 
         {/* Enemy robot */}
@@ -153,7 +243,7 @@ export default function BattleArena() {
             )}
           </AnimatePresence>
 
-          {/* Result overlay */}
+          {/* Result overlay — shown when battle:complete received */}
           <AnimatePresence>
             {phase === 'RESULT' && (
               <motion.div

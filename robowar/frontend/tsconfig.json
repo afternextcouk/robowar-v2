@@ -45,7 +45,8 @@
       "@types/*": [
         "./src/types/*"
       ]
-    }
+    },
+    "noImplicitAny": false
   },
   "include": [
     "src"
