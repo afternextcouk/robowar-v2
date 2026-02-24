@@ -10,7 +10,6 @@
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "@pixi/tilemap": "^4.2.0",
     "ethers": "^6.13.0",
     "framer-motion": "^11.3.0",
     "pixi.js": "^8.2.0",
