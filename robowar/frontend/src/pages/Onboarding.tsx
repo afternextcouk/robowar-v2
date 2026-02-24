@@ -1,169 +1,79 @@
-/**
- * ROBOWAR V2 — Onboarding / MetaMask Connect
- */
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { useWallet } from '../hooks/useWallet';
-import { useGameStore } from '../store/gameStore';
-
-const LOGO_CHARS = ['R', 'O', 'B', 'O', 'W', 'A', 'R'];
-const ELEMENT_COLORS = ['--volt', '--pyro', '--cryo', '--nano', '--void', '--iron', '--accent'];
+import { useWallet } from '../hooks/useWallet'
+import { useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { ELDR_CONTRACT_ADDRESS } from '../web3/wagmiConfig'
 
 export default function Onboarding() {
-  const navigate = useNavigate();
-  const { wallet, connect, isWrongNetwork, switchToRequiredChain } = useWallet();
-  const pilot = useGameStore((s) => s.pilot);
-  const isLoading = useGameStore((s) => s.isLoading);
-  const error = useGameStore((s) => s.error);
+  const { connect, address, eldrBalance, loading, error, isConnected } = useWallet()
+  const navigate = useNavigate()
 
-  // Redirect if already connected
   useEffect(() => {
-    if (wallet.isConnected) {
-      if (pilot) {
-        navigate('/lobby', { replace: true });
-      } else {
-        navigate('/pilot', { replace: true });
-      }
-    }
-  }, [wallet.isConnected, pilot, navigate]);
+    if (isConnected) navigate('/pilot')
+  }, [isConnected, navigate])
 
   return (
-    <motion.div
-      className="flex flex-col items-center justify-center w-full h-full bg-[--bg] relative overflow-hidden"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.4 }}
-    >
-      {/* Animated background grid */}
-      <div
-        className="absolute inset-0 opacity-10"
-        style={{
-          backgroundImage: `
-            linear-gradient(var(--border) 1px, transparent 1px),
-            linear-gradient(90deg, var(--border) 1px, transparent 1px)
-          `,
-          backgroundSize: '64px 64px',
-        }}
-      />
-
-      {/* Scanline animation */}
-      <div
-        className="absolute w-full h-16 bg-gradient-to-b from-white/5 to-transparent pointer-events-none"
-        style={{ animation: 'scanline 8s linear infinite', zIndex: 1 }}
-      />
-
+    <div className="min-h-screen bg-black flex flex-col items-center justify-center text-white font-pixel p-4">
       {/* Logo */}
-      <motion.div
-        className="flex gap-1 mb-12 z-10"
-        initial={{ y: -40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.2, duration: 0.6 }}
-      >
-        {LOGO_CHARS.map((char, i) => (
-          <motion.span
-            key={i}
-            className="font-pixel text-4xl md:text-6xl font-bold"
-            style={{ color: `var(${ELEMENT_COLORS[i]})` }}
-            animate={{
-              textShadow: [
-                `0 0 8px var(${ELEMENT_COLORS[i]})`,
-                `0 0 20px var(${ELEMENT_COLORS[i]})`,
-                `0 0 8px var(${ELEMENT_COLORS[i]})`,
-              ],
-            }}
-            transition={{ duration: 2, repeat: Infinity, delay: i * 0.15 }}
-          >
-            {char}
-          </motion.span>
-        ))}
-      </motion.div>
+      <div className="mb-8 text-center">
+        <h1 className="text-4xl font-bold mb-2 tracking-widest">
+          {'ROBOWAR'.split('').map((c, i) => (
+            <span key={i} style={{ color: ['#00BFFF','#CC2200','#E8F4FF','#00CC44','#6600AA','#888899','#00BFFF'][i % 7] }}>{c}</span>
+          ))}
+        </h1>
+        <p className="text-gray-400 text-xs tracking-widest">ALGORITHM BATTLE PROTOCOL</p>
+      </div>
 
-      {/* Subtitle */}
-      <motion.p
-        className="font-pixel text-xs text-[--muted] mb-2 z-10 tracking-widest"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.5 }}
-      >
-        BLOCKCHAIN BATTLE ARENA
-      </motion.p>
-      <motion.p
-        className="font-pixel text-[10px] text-[--accent] mb-16 z-10"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.7 }}
-      >
-        V 2.0.0
-      </motion.p>
-
-      {/* Connect Panel */}
-      <motion.div
-        className="pixel-panel z-10 w-full max-w-sm space-y-6 text-center"
-        initial={{ y: 40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.4, duration: 0.5 }}
-      >
-        <h2 className="font-pixel text-xs text-[--text] tracking-wide">
-          CONNECT PILOT
-        </h2>
-        <p className="font-pixel text-[9px] text-[--muted] leading-relaxed">
-          Link your MetaMask wallet to enter<br />the arena and command your robots.
-        </p>
-
-        {error && (
-          <div className="pixel-border border-[--pyro] bg-[--pyro]/10 p-3">
-            <p className="font-pixel text-[8px] text-[--pyro] leading-relaxed">
-              ⚠ {error}
+      {/* Wallet Connect Box */}
+      <div className="border border-gray-700 bg-gray-900 p-8 rounded w-full max-w-sm text-center">
+        {!address ? (
+          <>
+            <div className="text-6xl mb-4">🦊</div>
+            <h2 className="text-lg mb-2">Connect Your Wallet</h2>
+            <p className="text-gray-500 text-xs mb-6">
+              MetaMask required to play ROBOWAR
             </p>
-          </div>
-        )}
-
-        {isWrongNetwork ? (
-          <button
-            className="pixel-btn w-full elem-volt text-[10px] py-3"
-            onClick={switchToRequiredChain}
-          >
-            ⚡ SWITCH NETWORK
-          </button>
-        ) : (
-          <button
-            className="pixel-btn w-full text-[10px] py-3"
-            style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
-            onClick={connect}
-            disabled={isLoading || wallet.isConnecting}
-          >
-            {isLoading || wallet.isConnecting ? (
-              <span className="animate-pixel-pulse">CONNECTING...</span>
-            ) : (
-              '🦊 CONNECT METAMASK'
+            <button
+              onClick={connect}
+              disabled={loading}
+              className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white py-3 px-6 rounded font-bold tracking-wider transition-colors"
+            >
+              {loading ? 'CONNECTING...' : '⚡ CONNECT METAMASK'}
+            </button>
+            {error && (
+              <p className="text-red-400 text-xs mt-3">{error}</p>
             )}
-          </button>
-        )}
+            <p className="text-gray-600 text-xs mt-4">
+              No MetaMask?{' '}
+              <a href="https://metamask.io" target="_blank" rel="noreferrer" className="text-blue-400 underline">
+                Get it here
+              </a>
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="text-4xl mb-4">✅</div>
+            <h2 className="text-green-400 text-lg mb-1">Wallet Connected!</h2>
+            <p className="text-gray-400 text-xs mb-4 break-all">{address}</p>
+            
+            {/* ELDR Balance */}
+            <div className="bg-gray-800 border border-yellow-600 rounded p-3 mb-4">
+              <p className="text-yellow-400 text-xs mb-1">ELDR Balance</p>
+              <p className="text-2xl font-bold text-yellow-300">{eldrBalance} <span className="text-sm">ELDR</span></p>
+              <p className="text-gray-600 text-xs mt-1 break-all">
+                Contract: {ELDR_CONTRACT_ADDRESS.slice(0,10)}...{ELDR_CONTRACT_ADDRESS.slice(-6)}
+              </p>
+            </div>
 
-        {/* MetaMask install prompt */}
-        {typeof window !== 'undefined' && !window.ethereum && (
-          <a
-            href="https://metamask.io/download/"
-            target="_blank"
-            rel="noreferrer"
-            className="font-pixel text-[8px] text-[--muted] underline hover:text-[--volt] block"
-          >
-            Install MetaMask →
-          </a>
+            <p className="text-gray-400 text-xs">Redirecting to Pilot Creator...</p>
+          </>
         )}
-      </motion.div>
+      </div>
 
-      {/* Footer */}
-      <motion.p
-        className="absolute bottom-4 font-pixel text-[7px] text-[--muted] z-10"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1 }}
-      >
-        © 2026 ROBOWAR V2 — AFTERNEXT LABS
-      </motion.p>
-    </motion.div>
-  );
+      {/* Contract info */}
+      <div className="mt-6 text-center text-gray-700 text-xs">
+        <p>ELDR Contract</p>
+        <p className="break-all max-w-xs">{ELDR_CONTRACT_ADDRESS}</p>
+      </div>
+    </div>
+  )
 }

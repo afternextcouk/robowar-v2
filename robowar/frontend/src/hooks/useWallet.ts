@@ -1,200 +1,122 @@
-/**
- * ROBOWAR V2 — Wallet Hook
- * Handles MetaMask connection, account changes, chain changes,
- * AND the full JWT auth flow (nonce → sign → verify → store JWT).
- *
- * Auth flow:
- *   1. Connect MetaMask → get address
- *   2. GET /v2/auth/nonce/:address → { nonce, message }
- *   3. Sign message with MetaMask (eth_personalSign)
- *   4. POST /v2/auth/verify { address, signature } → { access_token, user }
- *   5. Store access_token in useAuthStore (→ localStorage via persist)
- *      + set authStore.user so the rest of the app knows who's logged in
- */
-import { useCallback, useEffect } from 'react';
-import { useGameStore } from '../store/gameStore';
-import { useAuthStore } from '../store/authStore';
-import { API_BASE } from '../api/client';
+import { useState, useEffect, useCallback } from 'react'
+import { useAuthStore } from '../store/authStore'
+import { ELDR_CONTRACT_ADDRESS, ELDR_ABI } from '../web3/wagmiConfig'
 
-// Polygon Mainnet chain ID (change as needed)
-const REQUIRED_CHAIN_ID = 137;
-
-// window.ethereum is typed as `any` in wagmiConfig.ts; we use a local helper type
-// to avoid duplicate interface merges.
-type EthereumProvider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-  on: (event: string, handler: (...args: unknown[]) => void) => void;
-  removeListener: (event: string, handler: (...args: unknown[]) => void) => void;
-  isMetaMask?: boolean;
-};
-
-function getEthereum(): EthereumProvider | undefined {
-  return (window as unknown as { ethereum?: EthereumProvider }).ethereum;
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function fetchNonce(address: string): Promise<{ nonce: string; message: string }> {
-  const res = await fetch(`${API_BASE}/auth/nonce/${address}`);
-  if (!res.ok) throw new Error('Failed to fetch nonce from server');
-  return res.json();
-}
-
-async function verifySignature(
-  address: string,
-  signature: string
-): Promise<{ access_token: string; user: { id: string; username: string; wallet_address: string; level: number; gmo_balance: number } }> {
-  const res = await fetch(`${API_BASE}/auth/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',  // receive httpOnly refresh_token cookie
-    body: JSON.stringify({ address, signature }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { message?: string };
-    throw new Error(err.message ?? 'Signature verification failed');
+declare global {
+  interface Window {
+    ethereum?: any
   }
-  return res.json();
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+const API_URL = import.meta.env?.VITE_API_URL ?? 'http://localhost:3000'
 
 export function useWallet() {
-  const { wallet, setWallet, disconnectWallet, setError, setLoading } =
-    useGameStore();
+  const [address, setAddress] = useState<string | null>(null)
+  const [chainId, setChainId] = useState<string | null>(null)
+  const [eldrBalance, setEldrBalance] = useState<string>('0')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { setToken, setUser, token } = useAuthStore()
 
-  const { setAccessToken, setUser, logout: authLogout } = useAuthStore();
+  // Fetch ELDR balance via eth_call
+  const fetchEldrBalance = useCallback(async (addr: string) => {
+    if (!window.ethereum) return
+    try {
+      // balanceOf(address) selector = 0x70a08231
+      const data = '0x70a08231' + addr.slice(2).padStart(64, '0')
+      const result = await window.ethereum.request({
+        method: 'eth_call',
+        params: [{ to: ELDR_CONTRACT_ADDRESS, data }, 'latest'],
+      })
+      // result is hex — convert to readable (18 decimals)
+      const raw = BigInt(result || '0x0')
+      const formatted = (Number(raw) / 1e18).toFixed(4)
+      setEldrBalance(formatted)
+    } catch {
+      setEldrBalance('0')
+    }
+  }, [])
 
-  // ── Connect + Auth ─────────────────────────────────────────────────────────
+  // Connect MetaMask + auth
   const connect = useCallback(async () => {
-    const eth = getEthereum();
-    if (!eth) {
-      setError('MetaMask not detected. Please install MetaMask.');
-      return;
+    if (!window.ethereum) {
+      setError('MetaMask not found. Please install MetaMask.')
+      return
     }
-
+    setLoading(true)
+    setError(null)
     try {
-      setLoading(true);
-      setWallet({ isConnecting: true });
-
       // 1. Request accounts
-      const accounts = (await eth.request({
+      const accounts: string[] = await window.ethereum.request({
         method: 'eth_requestAccounts',
-      })) as string[];
+      })
+      const addr = accounts[0].toLowerCase()
+      setAddress(addr)
 
-      const chainIdHex = (await eth.request({
-        method: 'eth_chainId',
-      })) as string;
+      // 2. Get chain
+      const chain = await window.ethereum.request({ method: 'eth_chainId' })
+      setChainId(chain)
 
-      const chainId = parseInt(chainIdHex, 16);
-      const address = accounts[0].toLowerCase();
+      // 3. Get nonce from backend
+      const nonceRes = await fetch(`${API_URL}/v2/auth/nonce/${addr}`)
+      const { message } = await nonceRes.json()
 
-      setWallet({
-        address,
-        chainId,
-        isConnected: true,
-        isConnecting: false,
-      });
-
-      // 2. Get nonce from backend
-      const { message } = await fetchNonce(address);
-
-      // 3. Ask MetaMask to sign the nonce message
-      const signature = (await eth.request({
+      // 4. Sign message
+      const signature = await window.ethereum.request({
         method: 'personal_sign',
-        params: [message, address],
-      })) as string;
+        params: [message, addr],
+      })
 
-      // 4. Verify signature → receive JWT
-      const authResult = await verifySignature(address, signature);
+      // 5. Verify and get JWT
+      const verifyRes = await fetch(`${API_URL}/v2/auth/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: addr, signature }),
+      })
+      const { token: jwt, user } = await verifyRes.json()
+      setToken(jwt)
+      setUser(user)
 
-      // 5. Store JWT + user in Zustand (authStore persists to localStorage)
-      setAccessToken(authResult.access_token);
-      setUser({
-        id: authResult.user.id,
-        username: authResult.user.username,
-        email: '',                       // wallet-auth users have no email
-        wallet_address: address,
-        gmo_balance: authResult.user.gmo_balance,
-        eldr_balance: '0',
-        xp: 0,
-        level: authResult.user.level,
-        avatar_url: null,
-        created_at: new Date().toISOString(),
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to connect wallet';
-      setError(message);
-      setWallet({ isConnecting: false });
+      // 6. Fetch ELDR balance
+      await fetchEldrBalance(addr)
+
+    } catch (err: any) {
+      setError(err.message || 'Connection failed')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [setWallet, setError, setLoading, setAccessToken, setUser]);
+  }, [fetchEldrBalance, setToken, setUser])
 
-  // ── Disconnect ──────────────────────────────────────────────────────────────
   const disconnect = useCallback(() => {
-    disconnectWallet();
-    authLogout();
-  }, [disconnectWallet, authLogout]);
+    setAddress(null)
+    setEldrBalance('0')
+    setToken(null)
+    setUser(null)
+  }, [setToken, setUser])
 
-  // ── Switch network ─────────────────────────────────────────────────────────
-  const switchToRequiredChain = useCallback(async () => {
-    const eth = getEthereum();
-    if (!eth) return;
-    try {
-      await eth.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: `0x${REQUIRED_CHAIN_ID.toString(16)}` }],
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to switch network';
-      setError(message);
-    }
-  }, [setError]);
-
-  // ── Listen for account / chain changes ─────────────────────────────────────
+  // Listen for account/chain changes
   useEffect(() => {
-    const eth = getEthereum();
-    if (!eth) return;
-
-    const handleAccountsChanged = (accounts: unknown) => {
-      const accs = accounts as string[];
-      if (accs.length === 0) {
-        disconnect();
-      } else {
-        setWallet({ address: accs[0].toLowerCase() });
-        // Re-auth on account switch
-        connect();
+    if (!window.ethereum) return
+    const onAccounts = (accounts: string[]) => {
+      if (accounts.length === 0) disconnect()
+      else {
+        setAddress(accounts[0].toLowerCase())
+        fetchEldrBalance(accounts[0])
       }
-    };
-
-    const handleChainChanged = (chainIdHex: unknown) => {
-      const chainId = parseInt(chainIdHex as string, 16);
-      setWallet({ chainId });
-    };
-
-    eth.on('accountsChanged', handleAccountsChanged);
-    eth.on('chainChanged', handleChainChanged);
-
+    }
+    const onChain = (chain: string) => setChainId(chain)
+    window.ethereum.on('accountsChanged', onAccounts)
+    window.ethereum.on('chainChanged', onChain)
     return () => {
-      eth.removeListener('accountsChanged', handleAccountsChanged);
-      eth.removeListener('chainChanged', handleChainChanged);
-    };
-  }, [connect, disconnect, setWallet]);
+      window.ethereum.removeListener('accountsChanged', onAccounts)
+      window.ethereum.removeListener('chainChanged', onChain)
+    }
+  }, [disconnect, fetchEldrBalance])
 
-  const isWrongNetwork =
-    wallet.isConnected && wallet.chainId !== REQUIRED_CHAIN_ID;
+  // Auto-fetch balance if already connected
+  useEffect(() => {
+    if (address) fetchEldrBalance(address)
+  }, [address, fetchEldrBalance])
 
-  const shortAddress = wallet.address
-    ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`
-    : null;
-
-  return {
-    wallet,
-    shortAddress,
-    isWrongNetwork,
-    connect,
-    disconnect,
-    switchToRequiredChain,
-  };
+  return { address, chainId, eldrBalance, loading, error, connect, disconnect, isConnected: !!address && !!token }
 }
