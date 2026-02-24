@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    font-family: "Inter", system-ui, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-color: #0a0a0f;
+    color: #ffffff;
+    min-height: 100vh;
+  }
+
+  /* Pixel-perfect canvas rendering */
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #12121a;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1e1e2e;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #7c3aed;
+  }
+
+  /* Selection */
+  ::selection {
+    background: #7c3aed;
+    color: #fff;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-rw-accent hover:bg-rw-accent-glow text-white font-pixel text-xs px-4 py-2 rounded transition-all duration-150 active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply bg-rw-surface border border-rw-border hover:border-rw-accent text-white font-pixel text-xs px-4 py-2 rounded transition-all duration-150 active:scale-95;
+  }
+
+  .btn-gold {
+    @apply bg-rw-gold hover:brightness-110 text-rw-bg font-pixel text-xs px-4 py-2 rounded transition-all duration-150 active:scale-95;
+  }
+
+  .card {
+    @apply bg-rw-surface border border-rw-border rounded-lg p-4;
+  }
+
+  .card-hover {
+    @apply card hover:border-rw-accent transition-colors duration-150 cursor-pointer;
+  }
+
+  .element-badge {
+    @apply inline-flex items-center gap-1 text-xs font-pixel px-2 py-0.5 rounded;
+  }
+
+  .element-badge-volt  { @apply bg-volt-DEFAULT/20 text-volt-DEFAULT border border-volt-DEFAULT/40; }
+  .element-badge-pyro  { @apply bg-pyro-DEFAULT/20 text-pyro-DEFAULT border border-pyro-DEFAULT/40; }
+  .element-badge-cryo  { @apply bg-cryo-DEFAULT/20 text-cryo-DEFAULT border border-cryo-DEFAULT/40; }
+  .element-badge-nano  { @apply bg-nano-DEFAULT/20 text-nano-DEFAULT border border-nano-DEFAULT/40; }
+  .element-badge-void  { @apply bg-void-DEFAULT/20 text-void-DEFAULT border border-void-DEFAULT/40; }
+  .element-badge-iron  { @apply bg-iron-DEFAULT/20 text-iron-DEFAULT border border-iron-DEFAULT/40; }
+
+  .hp-bar { @apply h-2 rounded-full overflow-hidden bg-rw-border; }
+  .hp-fill { @apply h-full transition-all duration-300 ease-out; }
+
+  .gmo-amount { @apply text-rw-gold font-pixel; }
+  .eldr-amount { @apply text-rw-eldr font-mono; }
+}
+
+@layer utilities {
+  .text-shadow-glow {
+    text-shadow: 0 0 10px currentColor;
+  }
+  .border-glow {
+    box-shadow: 0 0 10px -2px currentColor;
+  }
+  .scanlines {
+    background-image: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.3) 2px,
+      rgba(0, 0, 0, 0.3) 4px
+    );
+    pointer-events: none;
+  }
+}

@@ -1,0 +1,53 @@
+name: ROBOWAR CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  engine-test:
+    name: Engine Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: engine/package-lock.json }
+      - run: npm ci
+        working-directory: engine
+      - run: npm test
+        working-directory: engine
+
+  backend-lint:
+    name: Backend Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: backend/package-lock.json }
+      - run: npm ci
+        working-directory: backend
+      - run: npm run type-check
+        working-directory: backend
+
+  frontend-lint:
+    name: Frontend Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run type-check
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+        env:
+          VITE_API_URL: http://localhost:4000
+          VITE_WS_URL: ws://localhost:4000
+          VITE_CHAIN_ID: "1"
+          VITE_ELDR_CONTRACT: "0x0000000000000000000000000000000000000000"
+          VITE_WEB3_RPC_URL: https://mainnet.infura.io/v3/dummy
+          VITE_WC_PROJECT_ID: dummy

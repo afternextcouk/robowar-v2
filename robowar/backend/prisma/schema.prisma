@@ -1,0 +1,273 @@
+// ════════════════════════════════════════════════
+// ROBOWAR V2 — Prisma Schema
+// ════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────────────
+// Enums
+// ──────────────────────────────────────────────
+
+enum RobotTier {
+  FREE
+  COMMON
+  RARE
+  EPIC
+  LEGENDARY
+}
+
+enum ElementType {
+  FIRE
+  WATER
+  EARTH
+  AIR
+  LIGHTNING
+  VOID
+}
+
+enum BattleStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  ERROR
+}
+
+enum TransactionType {
+  SWAP
+  ENERGY_REFILL
+  BATTLE_REWARD
+  AIRDROP
+  PURCHASE
+}
+
+enum EnergyLogReason {
+  RECHARGE
+  GMO_PURCHASE
+  BATTLE_USE
+  ADMIN_GRANT
+}
+
+// ──────────────────────────────────────────────
+// User — wallet-authenticated player
+// ──────────────────────────────────────────────
+model User {
+  id            String   @id @default(cuid())
+  walletAddress String   @unique
+  username      String   @unique
+  gmoBalance    BigInt   @default(0)
+  eldrBalance   BigInt   @default(0)
+  isAdmin       Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastLoginAt   DateTime?
+
+  // Relations
+  pilots       Pilot[]
+  robots       Robot[]
+  transactions Transaction[]
+
+  @@index([walletAddress])
+  @@map("users")
+}
+
+// ──────────────────────────────────────────────
+// Pilot — player avatar / character
+// ──────────────────────────────────────────────
+model Pilot {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  level       Int      @default(1)
+  experience  Int      @default(0)
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  draws       Int      @default(0)
+  avatarUrl   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  robots  Robot[]
+
+  @@index([userId])
+  @@map("pilots")
+}
+
+// ──────────────────────────────────────────────
+// Robot — battle unit owned by a User
+// ──────────────────────────────────────────────
+model Robot {
+  id          String      @id @default(cuid())
+  ownerId     String
+  pilotId     String?
+  name        String
+  tier        RobotTier   @default(FREE)
+  element     ElementType
+  isActive    Boolean     @default(true)
+
+  // Combat stats
+  maxHp        Int   @default(100)
+  attackPower  Int   @default(20)
+  defensePower Int   @default(10)
+  speed        Int   @default(10)
+
+  // Energy system
+  energy               Int       @default(3)
+  lastEnergyRechargeAt DateTime?
+
+  // Optional active algorithm
+  activeAlgorithmId String?
+
+  // NFT info (optional)
+  tokenId     BigInt?   @unique
+  contractAddr String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  owner      User         @relation(fields: [ownerId], references: [id])
+  pilot      Pilot?       @relation(fields: [pilotId], references: [id])
+  algorithms Algorithm[]
+  energyLogs EnergyLog[]
+  battlesAs1 Battle[]     @relation("Robot1Battles")
+  battlesAs2 Battle[]     @relation("Robot2Battles")
+
+  @@index([ownerId])
+  @@index([tier])
+  @@index([element])
+  @@map("robots")
+}
+
+// ──────────────────────────────────────────────
+// Algorithm — decision tree for battles
+// ──────────────────────────────────────────────
+model Algorithm {
+  id        String   @id @default(cuid())
+  robotId   String
+  name      String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  robot Robot          @relation(fields: [robotId], references: [id], onDelete: Cascade)
+  rules AlgorithmRule[]
+
+  @@index([robotId])
+  @@map("algorithms")
+}
+
+// ──────────────────────────────────────────────
+// AlgorithmRule — individual rule in an algorithm
+// ──────────────────────────────────────────────
+model AlgorithmRule {
+  id          String @id @default(cuid())
+  algorithmId String
+  priority    Int    @default(0)   // Lower = higher priority
+  condition   String               // e.g. "hp < 30"
+  action      String               // e.g. "DEFEND" | "ATTACK_STRONG"
+  value       Float?               // Optional numeric param
+
+  // Relations
+  algorithm Algorithm @relation(fields: [algorithmId], references: [id], onDelete: Cascade)
+
+  @@index([algorithmId, priority])
+  @@map("algorithm_rules")
+}
+
+// ──────────────────────────────────────────────
+// Battle — a single match between two robots
+// ──────────────────────────────────────────────
+model Battle {
+  id           String       @id @default(cuid())
+  robot1Id     String
+  robot2Id     String
+  seed         BigInt                           // Deterministic simulation seed
+  status       BattleStatus @default(PENDING)
+  winnerId     String?                          // null = draw or in-progress
+  isDraw       Boolean      @default(false)
+  turnCount    Int          @default(0)
+  createdAt    DateTime     @default(now())
+  completedAt  DateTime?
+
+  // Relations
+  robot1 Robot        @relation("Robot1Battles", fields: [robot1Id], references: [id])
+  robot2 Robot        @relation("Robot2Battles", fields: [robot2Id], references: [id])
+  replay BattleReplay?
+
+  @@index([robot1Id])
+  @@index([robot2Id])
+  @@index([status])
+  @@index([createdAt])
+  @@map("battles")
+}
+
+// ──────────────────────────────────────────────
+// BattleReplay — full turn-by-turn replay data
+// ──────────────────────────────────────────────
+model BattleReplay {
+  id        String   @id @default(cuid())
+  battleId  String   @unique
+  turnsJson String   @db.Text   // JSON array of turns
+  seed      BigInt
+  createdAt DateTime @default(now())
+
+  // Relations
+  battle Battle @relation(fields: [battleId], references: [id], onDelete: Cascade)
+
+  @@map("battle_replays")
+}
+
+// ──────────────────────────────────────────────
+// EnergyLog — audit trail for energy changes
+// ──────────────────────────────────────────────
+model EnergyLog {
+  id          String          @id @default(cuid())
+  robotId     String
+  delta       Int                              // +/- energy change
+  reason      EnergyLogReason
+  energyAfter Int
+  createdAt   DateTime        @default(now())
+
+  // Relations
+  robot Robot @relation(fields: [robotId], references: [id], onDelete: Cascade)
+
+  @@index([robotId])
+  @@index([createdAt])
+  @@map("energy_logs")
+}
+
+// ──────────────────────────────────────────────
+// Transaction — GMO / ELDR economy ledger
+// ──────────────────────────────────────────────
+model Transaction {
+  id         String          @id @default(cuid())
+  userId     String
+  type       TransactionType
+  direction  String                             // e.g. GMO_TO_ELDR
+  gmoAmount  BigInt          @default(0)
+  eldrAmount BigInt          @default(0)
+  status     String          @default("PENDING")
+  meta       String?         @db.Text           // JSON extra data
+  txHash     String?                            // On-chain tx hash if applicable
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("transactions")
+}

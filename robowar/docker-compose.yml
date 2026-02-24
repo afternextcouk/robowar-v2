@@ -1,0 +1,146 @@
+version: "3.9"
+
+services:
+  # ─── PostgreSQL ───────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: robowar_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-robowar}
+      POSTGRES_USER: ${POSTGRES_USER:-robowar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-robowar_secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/src/db/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-robowar}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Redis ────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: robowar_redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-robowar_redis} --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-robowar_redis}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Backend API ──────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: robowar_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER:-robowar}:${POSTGRES_PASSWORD:-robowar_secret}@postgres:5432/${POSTGRES_DB:-robowar}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-robowar_redis}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_refresh_secret}
+      ELDR_CONTRACT_ADDRESS: ${ELDR_CONTRACT_ADDRESS}
+      WEB3_RPC_URL: ${WEB3_RPC_URL:-https://mainnet.infura.io/v3/YOUR_KEY}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run dev
+
+  # ─── Battle Worker ────────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: robowar_worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://${POSTGRES_USER:-robowar}:${POSTGRES_PASSWORD:-robowar_secret}@postgres:5432/${POSTGRES_DB:-robowar}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-robowar_redis}@redis:6379
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run worker
+
+  # ─── Frontend ─────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: robowar_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:4000}
+      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:4000}
+      VITE_ELDR_CONTRACT: ${ELDR_CONTRACT_ADDRESS}
+      VITE_CHAIN_ID: ${VITE_CHAIN_ID:-1}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  # ─── pgAdmin (dev only) ───────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: robowar_pgadmin
+    restart: unless-stopped
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@robowar.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+
+  # ─── Redis Commander (dev only) ───────────────────────────────
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: robowar_redis_ui
+    restart: unless-stopped
+    profiles: ["tools"]
+    environment:
+      REDIS_HOSTS: local:redis:6379:0:${REDIS_PASSWORD:-robowar_redis}
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: robowar_network
