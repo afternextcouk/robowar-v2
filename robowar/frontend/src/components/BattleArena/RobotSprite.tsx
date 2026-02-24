@@ -1,17 +1,25 @@
 /**
  * ROBOWAR V2 — Robot Sprite
- * PixiJS Container with procedural pixel-art robot body, HP bar,
- * selection ring, and element-colored glow filter.
+ * PixiJS Container with:
+ *   1. Real sprite sheet (from Marine Sosa Mech Assets pack) when available
+ *   2. Procedural pixel-art robot as fallback when PNG not found
+ *
+ * The loader is completely transparent — if the asset pack is not installed
+ * the game still runs with the hand-drawn procedural robot.
  */
 import {
   Container,
   Graphics,
+  Sprite,
   Text,
   TextStyle,
   ColorMatrixFilter,
   BlurFilter,
+  Ticker,
 } from 'pixi.js';
 import type { ElementType } from '../../store/gameStore';
+import { loadRobotSprite, type RobotTextureSet } from '../../assets/spriteLoader';
+import type { EvoStage } from '../../assets/manifest';
 
 // ─── Element → glow color map ─────────────────────────────────────────────────
 
@@ -26,19 +34,35 @@ const ELEMENT_COLORS: Record<ElementType, number> = {
 
 // ─── RobotSprite factory ──────────────────────────────────────────────────────
 
-interface RobotSpriteOptions {
-  element:  ElementType;
-  isEnemy:  boolean;
-  hp:       number;
-  maxHp:    number;
-  x:        number;
-  y:        number;
-  flipX?:   boolean;
+export interface RobotSpriteOptions {
+  element:       ElementType;
+  isEnemy:       boolean;
+  hp:            number;
+  maxHp:         number;
+  x:             number;
+  y:             number;
+  flipX?:        boolean;
+  /** Evolution stage for sprite selection (1–4), defaults to 1 */
+  evo?:          EvoStage;
+  /** Variant within element (1–6), defaults to 1 */
+  variantIndex?: number;
 }
 
 export default class RobotSprite {
+  // ─── Factory ──────────────────────────────────────────────────────────────
+
   static async create(opts: RobotSpriteOptions): Promise<Container> {
-    const { element, isEnemy, hp, maxHp, x, y, flipX = false } = opts;
+    const {
+      element,
+      isEnemy,
+      hp,
+      maxHp,
+      x,
+      y,
+      flipX    = false,
+      evo      = 1 as EvoStage,
+      variantIndex = 1,
+    } = opts;
     const color = ELEMENT_COLORS[element];
 
     const container = new Container();
@@ -60,9 +84,23 @@ export default class RobotSprite {
     glowG.filters = [blur];
     container.addChild(glowG);
 
-    // ── Robot body (pixel-art procedural) ────────────────────────────────────
-    const body = RobotSprite.drawBody(color, isEnemy);
-    container.addChild(body);
+    // ── Try to load real sprite; fall back to procedural ──────────────────────
+    const textures = await loadRobotSprite(element, evo, variantIndex);
+
+    if (textures) {
+      // ── Real sprite path ───────────────────────────────────────────────────
+      const spriteNode = RobotSprite.buildSpriteNode(textures, color);
+      spriteNode.label = 'robotBody';
+      container.addChild(spriteNode);
+
+      // Start idle animation
+      RobotSprite.playAnimation(spriteNode, textures, 'idle');
+    } else {
+      // ── Procedural fallback ────────────────────────────────────────────────
+      const body = RobotSprite.drawBody(color, isEnemy);
+      body.label = 'robotBody';
+      container.addChild(body);
+    }
 
     // ── HP bar ────────────────────────────────────────────────────────────────
     const hpBar = RobotSprite.drawHPBar(hp, maxHp);
@@ -90,45 +128,100 @@ export default class RobotSprite {
       elemLabel.x = 0;
     }
 
-    // ── Color matrix tint for element ─────────────────────────────────────────
-    const cm = new ColorMatrixFilter();
-    cm.tint(color, true);
-    cm.alpha = 0.25;
-    body.filters = [cm];
+    // ── Color tint (only for procedural body) ─────────────────────────────────
+    if (!textures) {
+      const body = container.getChildByLabel('robotBody') as Graphics | null;
+      if (body) {
+        const cm = new ColorMatrixFilter();
+        cm.tint(color, true);
+        cm.alpha = 0.25;
+        body.filters = [cm];
+      }
+    }
 
     return container;
+  }
+
+  // ─── Sprite-sheet animation helpers ──────────────────────────────────────
+
+  /** Build a Sprite node that can swap textures for animation frames. */
+  private static buildSpriteNode(textures: RobotTextureSet, _color: number): Sprite {
+    const sprite = new Sprite(textures.idle);
+    sprite.anchor.set(0.5, 0.5);
+    // Scale to fit the ~80px design space
+    sprite.width  = 80;
+    sprite.height = 80;
+    sprite.y      = -16; // align with procedural body centre
+    return sprite;
+  }
+
+  /** Simple frame-cycling animation using PixiJS Ticker. */
+  static playAnimation(
+    node: Sprite,
+    textures: RobotTextureSet,
+    anim: 'idle' | 'walk' | 'attack' | 'hit',
+  ): () => void {
+    const frames =
+      anim === 'idle'   ? [textures.idle] :
+      anim === 'walk'   ? textures.walk   :
+      anim === 'attack' ? textures.attack :
+                          [textures.hit];
+
+    if (frames.length <= 1) {
+      node.texture = frames[0];
+      return () => { /* no ticker to remove */ };
+    }
+
+    let frame     = 0;
+    let elapsed   = 0;
+    const FPS     = 8; // pixel-art feel
+    const delay   = 1000 / FPS;
+
+    const ticker = Ticker.shared;
+    const tick = (t: Ticker) => {
+      elapsed += t.deltaMS;
+      if (elapsed >= delay) {
+        elapsed = 0;
+        frame   = (frame + 1) % frames.length;
+        node.texture = frames[frame];
+      }
+    };
+
+    ticker.add(tick);
+    // Return cleanup function
+    return () => ticker.remove(tick);
   }
 
   // ─── Procedural pixel-art robot body ─────────────────────────────────────
 
   private static drawBody(color: number, isEnemy: boolean): Graphics {
     const g = new Graphics();
-    const baseColor = isEnemy ? 0xAA2222 : 0x2244AA;
-    const darkColor = isEnemy ? 0x661111 : 0x112266;
+    const baseColor  = isEnemy ? 0xAA2222 : 0x2244AA;
+    const darkColor  = isEnemy ? 0x661111 : 0x112266;
     const lightColor = 0xCCDDFF;
 
     // Legs
-    g.rect(-14, 8, 10, 18).fill(darkColor);
-    g.rect(4,   8, 10, 18).fill(darkColor);
+    g.rect(-14, 8,  10, 18).fill(darkColor);
+    g.rect(  4, 8,  10, 18).fill(darkColor);
 
     // Feet
     g.rect(-16, 22, 12, 6).fill(0x111122);
-    g.rect(4,   22, 12, 6).fill(0x111122);
+    g.rect(  4, 22, 12, 6).fill(0x111122);
 
     // Torso
     g.rect(-16, -14, 32, 24).fill(baseColor);
 
     // Chest detail
     g.rect(-10, -10, 20, 12).fill(darkColor);
-    g.rect(-6,  -8,  12, 8).fill(color);
+    g.rect( -6,  -8, 12,  8).fill(color);
 
     // Arms
     g.rect(-26, -12, 10, 20).fill(baseColor);
-    g.rect(16,  -12, 10, 20).fill(baseColor);
+    g.rect( 16, -12, 10, 20).fill(baseColor);
 
     // Hands / claws
     g.circle(-21, 10, 6).fill(darkColor);
-    g.circle(21,  10, 6).fill(darkColor);
+    g.circle( 21, 10, 6).fill(darkColor);
 
     // Neck
     g.rect(-6, -18, 12, 6).fill(darkColor);
@@ -142,7 +235,7 @@ export default class RobotSprite {
 
     // Ear panels
     g.rect(-18, -36, 4, 16).fill(darkColor);
-    g.rect(14,  -36, 4, 16).fill(darkColor);
+    g.rect( 14, -36, 4, 16).fill(darkColor);
 
     // Antenna
     g.rect(-2, -46, 4, 10).fill(darkColor);
@@ -157,10 +250,10 @@ export default class RobotSprite {
   // ─── HP Bar ───────────────────────────────────────────────────────────────
 
   private static drawHPBar(hp: number, maxHp: number): Container {
-    const c = new Container();
+    const c    = new Container();
     const barW = 48;
     const barH = 6;
-    const pct = Math.max(0, hp / maxHp);
+    const pct  = Math.max(0, hp / maxHp);
 
     // Track
     const track = new Graphics();
@@ -179,7 +272,7 @@ export default class RobotSprite {
     c.addChild(fill);
 
     // HP text
-    const style = new TextStyle({ fontFamily: '"Press Start 2P"', fontSize: 5, fill: 0xFFFFFF });
+    const style  = new TextStyle({ fontFamily: '"Press Start 2P"', fontSize: 5, fill: 0xFFFFFF });
     const hpText = new Text({ text: `${hp}/${maxHp}`, style });
     hpText.y = -8;
     c.addChild(hpText);

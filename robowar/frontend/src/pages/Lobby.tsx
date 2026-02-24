@@ -1,16 +1,23 @@
 /**
  * ROBOWAR V2 — Main Lobby
  * World map with battle zones, player stats, and navigation.
+ *
+ * Real matchmaking wiring:
+ *   • "FIND BATTLE" button → emit queue:join → listen match_found / matchmaking:matched
+ *   • On match found     → navigate to /battle/:battleId
+ *   • On cancel          → emit queue:leave
  */
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { useSocket } from '../hooks/useSocket';
+import { useAuthStore } from '../store/authStore';
 import PixelPanel from '../components/ui/PixelPanel';
 import PixelButton from '../components/ui/PixelButton';
 import ElementBadge from '../components/ui/ElementBadge';
 import HPBar from '../components/ui/HPBar';
+import type { WsQueueMatched } from '../types';
 
 const BATTLE_ZONES = [
   { id: 'ZONE_1', name: 'SILICON FLATS',  biome: 'GRASSLAND', x: 15, y: 20, active: true  },
@@ -26,27 +33,99 @@ const ZONE_COLORS = {
   CITY:      'var(--volt)',
 };
 
+// ─── Matchmaking status ───────────────────────────────────────────────────────
+
+type MatchStatus = 'IDLE' | 'SEARCHING' | 'MATCHED';
+
 export default function Lobby() {
   const navigate  = useNavigate();
-  const { connect, joinLobby, leaveLobby } = useSocket();
+  const { connect, joinMatchmaking, leaveMatchmaking, socket } = useSocket();
 
   const pilot       = useGameStore((s) => s.pilot);
   const activeRobot = useGameStore((s) => s.activeRobot);
   const eldrBalance = useGameStore((s) => s.eldrBalance);
   const gmoBalance  = useGameStore((s) => s.gmoBalance);
+  const authUser    = useAuthStore((s) => s.user);
 
+  const [matchStatus, setMatchStatus] = useState<MatchStatus>('IDLE');
+  const [searchingSince, setSearchingSince] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  // ── Socket setup ──────────────────────────────────────────────────────────
   useEffect(() => {
     const sock = connect();
-    sock.on('connect', () => joinLobby());
-    return () => {
-      leaveLobby();
-    };
-  }, [connect, joinLobby, leaveLobby]);
 
+    // Matchmaking joined confirmation (backend: queue:updated)
+    sock.on('queue:updated', () => {
+      setMatchStatus('SEARCHING');
+      setSearchingSince(Date.now());
+    });
+
+    // Also handle the aliased event name
+    sock.on('matchmaking:joined', () => {
+      setMatchStatus('SEARCHING');
+      setSearchingSince(Date.now());
+    });
+
+    // Match found! (backend matchmaking.ts emits 'match_found')
+    const handleMatchFound = (data: { battleId: string; opponent: unknown; startsAt: string }) => {
+      setMatchStatus('MATCHED');
+      navigate(`/battle/${data.battleId}`);
+    };
+
+    // Also handle typed alias
+    const handleMatchmakingMatched = (data: WsQueueMatched) => {
+      setMatchStatus('MATCHED');
+      navigate(`/battle/${data.battle_id}`);
+    };
+
+    sock.on('match_found',          handleMatchFound);
+    sock.on('matchmaking:matched',  handleMatchmakingMatched);
+
+    return () => {
+      sock.off('queue:updated');
+      sock.off('matchmaking:joined');
+      sock.off('match_found',         handleMatchFound);
+      sock.off('matchmaking:matched', handleMatchmakingMatched);
+      // Leave queue when navigating away
+      leaveMatchmaking();
+    };
+  }, [connect, navigate, leaveMatchmaking]);
+
+  // ── Elapsed timer while searching ─────────────────────────────────────────
+  useEffect(() => {
+    if (matchStatus !== 'SEARCHING' || !searchingSince) return;
+    const id = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - searchingSince) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [matchStatus, searchingSince]);
+
+  // ── Find Battle ───────────────────────────────────────────────────────────
+  const handleFindBattle = useCallback(() => {
+    if (!activeRobot) return;
+    joinMatchmaking({
+      mode:         'RANKED',
+      robot_id:     activeRobot.id,
+      // algorithm_id is optional if not yet assigned
+    });
+    setMatchStatus('SEARCHING');
+    setSearchingSince(Date.now());
+    setElapsed(0);
+  }, [activeRobot, joinMatchmaking]);
+
+  // ── Cancel search ─────────────────────────────────────────────────────────
+  const handleCancelSearch = useCallback(() => {
+    leaveMatchmaking();
+    setMatchStatus('IDLE');
+    setSearchingSince(null);
+    setElapsed(0);
+  }, [leaveMatchmaking]);
+
+  // ── Zone click (quick match into specific biome) ──────────────────────────
   const handleZoneClick = (zoneId: string, active: boolean) => {
     if (!active) return;
-    const battleId = `${zoneId}_${Date.now()}`;
-    navigate(`/battle/${battleId}`);
+    handleFindBattle();
   };
 
   if (!pilot) return null;
@@ -66,7 +145,9 @@ export default function Lobby() {
               <span className="text-xl">🤖</span>
             </div>
             <div>
-              <p className="font-pixel text-[8px] text-[--accent]">{pilot.name}</p>
+              <p className="font-pixel text-[8px] text-[--accent]">
+                {authUser?.username ?? pilot.name}
+              </p>
               <p className="font-pixel text-[6px] text-[--muted]">LVL {pilot.level}</p>
             </div>
           </div>
@@ -83,11 +164,15 @@ export default function Lobby() {
           <p className="font-pixel text-[7px] text-[--accent]">BALANCES</p>
           <div className="flex justify-between items-center">
             <span className="font-pixel text-[6px] text-[--muted]">GMO</span>
-            <span className="font-pixel text-[8px] text-[--nano]">{gmoBalance}</span>
+            <span className="font-pixel text-[8px] text-[--nano]">
+              {authUser?.gmo_balance ?? gmoBalance}
+            </span>
           </div>
           <div className="flex justify-between items-center">
             <span className="font-pixel text-[6px] text-[--muted]">ELDR</span>
-            <span className="font-pixel text-[8px] text-[--volt]">{eldrBalance}</span>
+            <span className="font-pixel text-[8px] text-[--volt]">
+              {authUser?.eldr_balance ?? eldrBalance}
+            </span>
           </div>
         </PixelPanel>
 
@@ -100,6 +185,45 @@ export default function Lobby() {
             <HPBar hp={activeRobot.stats.hp} maxHp={activeRobot.stats.maxHp} />
           </PixelPanel>
         )}
+
+        {/* ── Matchmaking CTA ── */}
+        <PixelPanel className="space-y-3">
+          {matchStatus === 'IDLE' && (
+            <PixelButton
+              onClick={handleFindBattle}
+              fullWidth
+              disabled={!activeRobot}
+            >
+              ⚔ FIND BATTLE
+            </PixelButton>
+          )}
+
+          {matchStatus === 'SEARCHING' && (
+            <>
+              <div className="text-center">
+                <p className="font-pixel text-[7px] text-[--volt] animate-pulse">
+                  SEARCHING... {elapsed}s
+                </p>
+                <p className="font-pixel text-[6px] text-[--muted] mt-1">
+                  Looking for an opponent
+                </p>
+              </div>
+              <PixelButton
+                onClick={handleCancelSearch}
+                fullWidth
+                className="text-[--pyro] border-[--pyro]"
+              >
+                ✕ CANCEL
+              </PixelButton>
+            </>
+          )}
+
+          {matchStatus === 'MATCHED' && (
+            <p className="font-pixel text-[7px] text-[--nano] text-center animate-pulse">
+              ✅ MATCH FOUND!
+            </p>
+          )}
+        </PixelPanel>
 
         {/* Navigation */}
         <div className="space-y-2">
@@ -174,7 +298,9 @@ export default function Lobby() {
               </div>
               <div>{zone.name}</div>
               {zone.active && (
-                <div className="text-[5px] opacity-70 mt-1">ENTER</div>
+                <div className="text-[5px] opacity-70 mt-1">
+                  {matchStatus === 'SEARCHING' ? '⚔ JOINING...' : 'ENTER'}
+                </div>
               )}
               {!zone.active && (
                 <div className="text-[5px] opacity-70 mt-1">LOCKED</div>

@@ -1,9 +1,20 @@
 /**
  * ROBOWAR V2 — Wallet Hook
- * Handles MetaMask connection, account changes, chain changes.
+ * Handles MetaMask connection, account changes, chain changes,
+ * AND the full JWT auth flow (nonce → sign → verify → store JWT).
+ *
+ * Auth flow:
+ *   1. Connect MetaMask → get address
+ *   2. GET /v2/auth/nonce/:address → { nonce, message }
+ *   3. Sign message with MetaMask (eth_personalSign)
+ *   4. POST /v2/auth/verify { address, signature } → { access_token, user }
+ *   5. Store access_token in useAuthStore (→ localStorage via persist)
+ *      + set authStore.user so the rest of the app knows who's logged in
  */
 import { useCallback, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
+import { useAuthStore } from '../store/authStore';
+import { API_BASE } from '../api/client';
 
 // Polygon Mainnet chain ID (change as needed)
 const REQUIRED_CHAIN_ID = 137;
@@ -19,10 +30,40 @@ declare global {
   }
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+async function fetchNonce(address: string): Promise<{ nonce: string; message: string }> {
+  const res = await fetch(`${API_BASE}/auth/nonce/${address}`);
+  if (!res.ok) throw new Error('Failed to fetch nonce from server');
+  return res.json();
+}
+
+async function verifySignature(
+  address: string,
+  signature: string
+): Promise<{ access_token: string; user: { id: string; username: string; wallet_address: string; level: number; gmo_balance: number } }> {
+  const res = await fetch(`${API_BASE}/auth/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',  // receive httpOnly refresh_token cookie
+    body: JSON.stringify({ address, signature }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { message?: string };
+    throw new Error(err.message ?? 'Signature verification failed');
+  }
+  return res.json();
+}
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
 export function useWallet() {
   const { wallet, setWallet, disconnectWallet, setError, setLoading } =
     useGameStore();
 
+  const { setAccessToken, setUser, logout: authLogout } = useAuthStore();
+
+  // ── Connect + Auth ─────────────────────────────────────────────────────────
   const connect = useCallback(async () => {
     if (!window.ethereum) {
       setError('MetaMask not detected. Please install MetaMask.');
@@ -33,6 +74,7 @@ export function useWallet() {
       setLoading(true);
       setWallet({ isConnecting: true });
 
+      // 1. Request accounts
       const accounts = (await window.ethereum.request({
         method: 'eth_requestAccounts',
       })) as string[];
@@ -42,13 +84,40 @@ export function useWallet() {
       })) as string;
 
       const chainId = parseInt(chainIdHex, 16);
-      const address = accounts[0];
+      const address = accounts[0].toLowerCase();
 
       setWallet({
         address,
         chainId,
         isConnected: true,
         isConnecting: false,
+      });
+
+      // 2. Get nonce from backend
+      const { message } = await fetchNonce(address);
+
+      // 3. Ask MetaMask to sign the nonce message
+      const signature = (await window.ethereum.request({
+        method: 'personal_sign',
+        params: [message, address],
+      })) as string;
+
+      // 4. Verify signature → receive JWT
+      const authResult = await verifySignature(address, signature);
+
+      // 5. Store JWT + user in Zustand (authStore persists to localStorage)
+      setAccessToken(authResult.access_token);
+      setUser({
+        id: authResult.user.id,
+        username: authResult.user.username,
+        email: '',                       // wallet-auth users have no email
+        wallet_address: address,
+        gmo_balance: authResult.user.gmo_balance,
+        eldr_balance: '0',
+        xp: 0,
+        level: authResult.user.level,
+        avatar_url: null,
+        created_at: new Date().toISOString(),
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to connect wallet';
@@ -57,12 +126,15 @@ export function useWallet() {
     } finally {
       setLoading(false);
     }
-  }, [setWallet, setError, setLoading]);
+  }, [setWallet, setError, setLoading, setAccessToken, setUser]);
 
+  // ── Disconnect ──────────────────────────────────────────────────────────────
   const disconnect = useCallback(() => {
     disconnectWallet();
-  }, [disconnectWallet]);
+    authLogout();
+  }, [disconnectWallet, authLogout]);
 
+  // ── Switch network ─────────────────────────────────────────────────────────
   const switchToRequiredChain = useCallback(async () => {
     if (!window.ethereum) return;
     try {
@@ -76,16 +148,18 @@ export function useWallet() {
     }
   }, [setError]);
 
-  // Listen for account / chain changes
+  // ── Listen for account / chain changes ─────────────────────────────────────
   useEffect(() => {
     if (!window.ethereum) return;
 
     const handleAccountsChanged = (accounts: unknown) => {
       const accs = accounts as string[];
       if (accs.length === 0) {
-        disconnectWallet();
+        disconnect();
       } else {
-        setWallet({ address: accs[0] });
+        setWallet({ address: accs[0].toLowerCase() });
+        // Re-auth on account switch
+        connect();
       }
     };
 
@@ -101,7 +175,7 @@ export function useWallet() {
       window.ethereum?.removeListener('accountsChanged', handleAccountsChanged);
       window.ethereum?.removeListener('chainChanged', handleChainChanged);
     };
-  }, [setWallet, disconnectWallet]);
+  }, [connect, disconnect, setWallet]);
 
   const isWrongNetwork =
     wallet.isConnected && wallet.chainId !== REQUIRED_CHAIN_ID;
