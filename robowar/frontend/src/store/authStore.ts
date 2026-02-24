@@ -1,45 +1,25 @@
-import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
-import type { User } from "@/types";
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 interface AuthState {
-  user: User | null;
-  accessToken: string | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-
-  // Actions
-  setUser: (user: User) => void;
-  setAccessToken: (token: string) => void;
-  logout: () => void;
-  setLoading: (v: boolean) => void;
-  updateBalance: (gmo: number, eldr: string) => void;
+  token: string | null
+  user: any | null
+  isAuthenticated: boolean
+  setToken: (token: string | null) => void
+  setUser: (user: any | null) => void
+  clear: () => void
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
+      token: null,
       user: null,
-      accessToken: null,
       isAuthenticated: false,
-      isLoading: true,
-
-      setUser: (user) => set({ user, isAuthenticated: true }),
-      setAccessToken: (accessToken) => set({ accessToken }),
-      logout: () =>
-        set({ user: null, accessToken: null, isAuthenticated: false }),
-      setLoading: (isLoading) => set({ isLoading }),
-      updateBalance: (gmo_balance, eldr_balance) =>
-        set((s) =>
-          s.user
-            ? { user: { ...s.user, gmo_balance, eldr_balance } }
-            : {}
-        ),
+      setToken: (token) => set({ token, isAuthenticated: !!token }),
+      setUser: (user) => set({ user }),
+      clear: () => set({ token: null, user: null, isAuthenticated: false }),
     }),
-    {
-      name: "robowar-auth",
-      storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({ accessToken: s.accessToken }),
-    }
+    { name: 'robowar-auth' }
   )
-);
+)

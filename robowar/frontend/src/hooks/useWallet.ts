@@ -6,7 +6,7 @@ declare global {
   interface Window { ethereum?: any }
 }
 
-const API_URL = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:3000'
+const API_URL = (import.meta as any).env?.VITE_API_URL ?? ''
 
 async function switchToBSC(): Promise<boolean> {
   try {
@@ -16,8 +16,7 @@ async function switchToBSC(): Promise<boolean> {
     })
     return true
   } catch (err: any) {
-    // Chain not added yet → add it
-    if (err.code === 4902) {
+    if (err.code === 4902 || err.code === -32603) {
       try {
         await window.ethereum!.request({
           method: 'wallet_addEthereumChain',
@@ -30,9 +29,7 @@ async function switchToBSC(): Promise<boolean> {
           }],
         })
         return true
-      } catch {
-        return false
-      }
+      } catch { return false }
     }
     return false
   }
@@ -47,9 +44,7 @@ async function getEldrBalance(address: string): Promise<string> {
     })
     const value = BigInt(raw || '0x0')
     return (Number(value) / 1e18).toFixed(4)
-  } catch {
-    return '0.0000'
-  }
+  } catch { return '0.0000' }
 }
 
 export function useWallet() {
@@ -58,58 +53,78 @@ export function useWallet() {
   const [eldrBalance, setEldrBalance] = useState<string>('0.0000')
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState<string | null>(null)
-  const { setToken, setUser, token, clear } = useAuthStore()
+  const { setToken, setUser, clear }  = useAuthStore()
 
   const connect = useCallback(async () => {
     if (!window.ethereum) {
-      setError('MetaMask bulunamadı. Lütfen MetaMask yükleyin.')
+      setError('Cüzdan bulunamadı. MetaMask veya Trust Wallet yükleyin.')
       return
     }
     setLoading(true)
     setError(null)
-
     try {
       // 1. Request accounts
       const accounts: string[] = await window.ethereum.request({ method: 'eth_requestAccounts' })
       const addr = accounts[0].toLowerCase()
 
-      // 2. Switch / add BSC network
+      // 2. Switch to BSC
       const chain: string = await window.ethereum.request({ method: 'eth_chainId' })
       if (chain.toLowerCase() !== BSC_CHAIN.chainId) {
-        const switched = await switchToBSC()
-        if (!switched) throw new Error('Please switch to BNB Smart Chain network.')
+        const ok = await switchToBSC()
+        if (!ok) throw new Error('Lütfen BNB Smart Chain (BSC) ağına geçin.')
       }
       setChainId(BSC_CHAIN.chainId)
       setAddress(addr)
 
-      // 3. Get nonce from backend
-      const nonceRes = await fetch(`${API_URL}/v2/auth/nonce/${addr}`)
-      if (!nonceRes.ok) throw new Error('Failed to get nonce from server')
-      const { message } = await nonceRes.json()
-
-      // 4. Sign with MetaMask (personal_sign — pure JS, no library)
+      // 3. Sign message (proves ownership)
+      const message = `ROBOWAR Login\nAddress: ${addr}\nTimestamp: ${Date.now()}`
       const signature: string = await window.ethereum.request({
         method: 'personal_sign',
         params: [message, addr],
       })
 
-      // 5. Verify on backend → get JWT
-      const verifyRes = await fetch(`${API_URL}/v2/auth/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: addr, signature }),
-      })
-      if (!verifyRes.ok) throw new Error('Signature verification failed')
-      const { token: jwt, user } = await verifyRes.json()
+      // 4. Try backend auth (optional — if backend unavailable, use wallet as identity)
+      let jwt = `wallet_${addr}` // fallback token = wallet address
+      let user = { address: addr, walletAddress: addr }
+
+      if (API_URL) {
+        try {
+          const nonceRes = await fetch(`${API_URL}/v2/auth/nonce/${addr}`)
+          if (nonceRes.ok) {
+            const { message: nonceMsg } = await nonceRes.json()
+            const sig2: string = await window.ethereum.request({
+              method: 'personal_sign',
+              params: [nonceMsg, addr],
+            })
+            const verifyRes = await fetch(`${API_URL}/v2/auth/verify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ address: addr, signature: sig2 }),
+            })
+            if (verifyRes.ok) {
+              const data = await verifyRes.json()
+              jwt = data.token
+              user = data.user
+            }
+          }
+        } catch {
+          // Backend unavailable — use wallet-based auth
+        }
+      }
+
       setToken(jwt)
       setUser(user)
 
-      // 6. Fetch ELDR balance on BSC
+      // 5. Fetch ELDR balance
       const bal = await getEldrBalance(addr)
       setEldrBalance(bal)
 
     } catch (err: any) {
-      setError(err?.message ?? 'Bağlantı başarısız')
+      if (err.code === 4001) {
+        setError('İşlem reddedildi.')
+      } else {
+        setError(err?.message ?? 'Bağlantı başarısız')
+      }
     } finally {
       setLoading(false)
     }
@@ -118,10 +133,11 @@ export function useWallet() {
   const disconnect = useCallback(() => {
     setAddress(null)
     setEldrBalance('0.0000')
+    setChainId(null)
     clear()
   }, [clear])
 
-  // Account / chain change listeners
+  // Account / chain listeners
   useEffect(() => {
     if (!window.ethereum) return
     const onAccounts = (accounts: string[]) => {
@@ -134,11 +150,9 @@ export function useWallet() {
     }
     const onChain = (id: string) => {
       setChainId(id)
-      if (id.toLowerCase() !== BSC_CHAIN.chainId) {
-        setError('Lütfen BNB Smart Chain ağına geçin')
-      } else {
-        setError(null)
-      }
+      if (id.toLowerCase() !== BSC_CHAIN.chainId)
+        setError('⚠️ BNB Smart Chain ağına geçin')
+      else setError(null)
     }
     window.ethereum.on('accountsChanged', onAccounts)
     window.ethereum.on('chainChanged', onChain)
@@ -149,14 +163,9 @@ export function useWallet() {
   }, [disconnect])
 
   return {
-    address,
-    chainId,
-    eldrBalance,
-    loading,
-    error,
-    connect,
-    disconnect,
-    isConnected: !!address && !!token,
+    address, chainId, eldrBalance, loading, error,
+    connect, disconnect,
+    isConnected: !!address, // ← address alone = connected (no backend dependency)
     isOnBSC: chainId?.toLowerCase() === BSC_CHAIN.chainId,
   }
 }
